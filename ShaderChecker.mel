@@ -1,0 +1,262 @@
+global int $currentShader;
+global int $shaderListSize;
+global string $shaderList[];
+global string $shaderText;
+global string $isolate;
+global string $shaderSelect;
+
+global proc startSHCH()
+
+{
+	global string $shaderText;
+	global string $isolate;
+	global string $shaderSelect;
+	global int $currentShader = 0;
+
+    if (`window -ex shchWindow`)
+        deleteUI shchWindow;
+
+    string $window = `window -s 0 -rtf 0 -title "Shader Checker" shchWindow`;
+    //Create a master row layout so we can add some spacing to either side to make things look nicer
+    rowLayout -nc 3;
+    separator -st "none" -w 5;
+	    //Create the baseline Column Layout
+	    columnLayout -columnAlign  "center";
+		$shaderText = `text /*-bgc .35 .35 .35*/ -width 204 -label "none" -al "center" -fn boldLabelFont -height 35`;
+		separator -st "singleDash" -hr 1 -width 204 -height 20;
+		$isolate = `checkBox -al "center" -width 200 -label "Isolate Selection" -v 1 -offCommand "isolateSelect -state 0 `getPanel -wf`"`;
+		
+		    //Create a row layout for the previous and next buttons
+		    
+			rowLayout -nc 2;
+			string $previousButton = `button -width 100 -height 35 -label "Previous" -command "previousShader()"`;
+			string $nextButton = `button -width 100 -height 35 -label  "Next" -command "nextShader()"`;
+			setParent ..;
+
+	        //Create a row layout for the two refresh buttons
+	        
+			rowLayout -nc 2;
+			string $refreshShadersButton = `button -width 100 -height 20 -label "Refresh Shaders" -command "refreshShaderList()"`;
+			string $refreshSelectionButton = `button -width 100 -height 20 -label "Refresh Selection" -command "selectObjects(); isolateObjs;"`;
+			setParent ..;
+
+		separator -w 200 -st "none" -h 10;
+	    $shaderSelect = `optionMenu -width 200 -label "Select Shader" -changeCommand "optionMenuChange()"`;
+		separator -w 204 -h 8 -st "none";
+		setParent ..;
+
+	separator -st "none" -w 5;
+	setParent..;
+	
+	
+    //Update the shader list and shader text with whatever shader is selected initially
+    
+	refreshShaderList();
+	updateText();
+
+    showWindow shchWindow;
+
+};
+
+
+global proc previousShader()
+{
+	global int $currentShader;
+	global int $shaderListSize;
+	global string $shaderList[];
+
+    //Go back one shader in the list, or if its at the start, wrap around to the last shader
+    
+	if ($currentShader > 0)
+		$currentShader -= 1;
+	else
+		$currentShader = ($shaderListSize-1);
+
+    //Select the appropriate objects and isolate them if necessary, and update the text
+    
+	selectObjects();
+	isolateObjs();
+	updateText();
+};
+
+
+
+global proc nextShader()
+
+{
+	global int $currentShader;
+	global int $shaderListSize;
+	global string $shaderList[];
+
+    //Go forwards one shader in the list, or if its at the end, wrap around to the first shader
+    
+	if ($currentShader < ($shaderListSize-1))
+		$currentShader += 1;
+	else
+		$currentShader = 0;
+
+    //Select the appropriate objects and isolate them if necessary, and update the text
+    
+	selectObjects();
+	isolateObjs();
+	updateText();
+};
+
+
+
+global proc refreshShaderList()
+
+{
+	global int $currentShader;
+	global int $shaderListSize;
+	global string $shaderList[];
+	global string $shaderSelect;
+
+    //First off clear out the current shader list array of all entries
+	clear($shaderList);
+
+    //If there are options in the shader select dropdown menu, clear them out as well
+	string $mc[] = `optionMenu -q -ill $shaderSelect`;
+	if ($mc[0] != "")
+	deleteUI(`optionMenu -q -ill $shaderSelect`);
+
+    //Get a list of all objects in the scene
+	string $allList[] = `ls`;
+	string $sg;
+	
+	//Initialize a variable to count the amount of shading groups there are
+	int $sgCount;
+	
+	//Run a for loop to check all objects in the scene
+	for ($sg in $allList)
+		{
+		//These are hard lockouts to prevent selecting these two nodes which were
+		//getting picked up for some reason, and they're undeletable and shouldn't
+		//be tampered with
+		
+		if ($sg != "materialInfo1" && $sg != "initialParticleSE")
+			{
+			//Get the node type of each object in the list and check to see if its
+			//of the type 'shadingEngine'
+			
+			string $nt = `nodeType $sg`;
+			if ($nt == "shadingEngine")
+				{
+				//If it is, add it to the array listing all the shading engine nodes
+				//And add one to the count
+				
+				$shaderList[$sgCount]=$sg;
+				$sgCount++;
+				}
+			}
+		}
+
+    //At the end of the for loop, set the size variable for the shader list
+    //Also sort the list alphabetically
+    
+	$shaderListSize = size($shaderList);
+	$shaderList = `sort $shaderList`;
+
+    //Now run a second for loop confined just to the size of the shader list
+    //This is to repopulate the dropdown menu with the newly found and
+    //Alphabetized options
+    
+	for ($i=0;$i<$shaderListSize;$i++)
+		{
+		menuItem -label $shaderList[$i] -p $shaderSelect;
+		}
+
+    //If shaders have been deleted, and the current selection is higher than
+    //the new total amount of shaders, bump the selection down to the new
+    //maximum
+    
+	if ($currentShader > $shaderListSize)
+		$currentShader = $shaderListSize;
+};
+
+
+
+global proc selectObjects()
+{
+	select -cl;
+	global string $shaderList[];
+	global int $currentShader;
+	global string $shaderText;
+
+    //First, create a list of connections for the object located in the array
+    //"shaderList" at location "currentShader".  Current shader should already
+    //Be set in another function, and this function is specifically for selecting
+    
+	string $selectionList[] = `listConnections $shaderList[$currentShader]`;
+	string $obj;
+
+    //Go through the list of connections and find all the meshes attached to the
+    //currently selected shader group.  This will give us a selection set of all
+    //objects with that shader assigned
+    
+	for ($obj in $selectionList)
+		{
+		//Check the nodeType, and if its a transform or mesh, add it to the selection
+		
+		string $nt = `nodeType $obj`;
+		if ($nt == "transform" || $nt == "mesh")
+			{
+			select -add $obj;
+			}
+		}
+};
+
+global proc updateText()
+{
+	global string $shaderList[];
+	global int $currentShader;
+	global string $shaderText;
+	
+	//Update the text, but first just for cleanliness sake, find the _pxySG text
+	//and replace it with nothing
+	
+	string $t = `substitute "_pxySG" $shaderList[$currentShader] ""`;
+
+    //Then add the "Current Shader" text at the top	
+	
+	$t="-Current Shader-\n"+$t;
+	text -e -label $t $shaderText;
+};
+
+global proc isolateObjs()
+{
+	global string $isolate;
+	
+	//If the isolate checkbox is checked and this is called, isolate the selected objects
+	
+	if (`checkBox -q -v $isolate` == 1)
+		{
+		string $sl[]=`ls -sl`;
+
+        //Only isolate selected objects if there is a selection to be isolated, otherwise
+        //dont isolate anything		
+		
+		if (size($sl) > 0)
+		enableIsolateSelect `getPanel -wf` true;
+		else
+		isolateSelect -state 0 `getPanel -wf`;
+		}
+};
+
+global proc optionMenuChange()
+{
+	global int $currentShader;
+	global string $shaderSelect;
+    
+    //When the dropdown optionmenu changes, jump straight to that shader.	
+	
+	$currentShader = `optionMenu -q -sl $shaderSelect`;
+	$currentShader -= 1;
+	
+	selectObjects();
+	isolateObjs();
+	updateText();
+};
+
+startSHCH();
+
